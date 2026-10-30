@@ -36,6 +36,20 @@ const response = await client.sendRequest("pool.dataset.query", [[], { limit: 10
 console.log(response.result);
 ```
 
+### Session
+
+Use `connect`, `call` and `close` to make several calls over one connection with a single login. This matters when calling repeatedly (polling a job, for example): TrueNAS rate-limits logins.
+
+```ts
+await client.connect();
+try {
+  const info = await client.call("system.info");
+  const pools = await client.call("pool.query", [[], { select: ["name"] }]);
+} finally {
+  client.close();
+}
+```
+
 ### Error Handling
 
 Each response may include an `error` object instead of a `result`. Always check for errors:
@@ -56,6 +70,7 @@ Requests will reject with an `Error` in the following cases:
 - **Timeout** — no response received within 30 seconds (default).
 - **WebSocket error** — connection-level error.
 - **WebSocket closed** — server closes the connection before a response is received.
+- **Connection lost** — `call` on a session whose connection the server has already closed.
 
 ## API
 
@@ -79,6 +94,18 @@ Sends a single JSON-RPC 2.0 request. Opens a WebSocket connection, authenticates
 | `method`    | `string` | —       | The JSON-RPC method to call (e.g. `"system.info"`)      |
 | `params`    | `any`    | —       | Optional parameters to pass with the request             |
 | `timeoutMs` | `number` | `30000` | Timeout in milliseconds for each underlying WebSocket call (auth + request) |
+
+### `client.connect(timeoutMs?: number): Promise<void>`
+
+Opens a WebSocket connection and authenticates with the API key. The connection stays open for `call` until `close` is called or the server drops it. Rejects if the client is already connected or authentication fails.
+
+### `client.call(method: string, params?: any, timeoutMs?: number): Promise<JSONRPCResponse>`
+
+Sends a JSON-RPC 2.0 request over the connection opened by `connect`. Rejects if `connect` hasn't been called, or straight away if the connection has been lost.
+
+### `client.close(): void`
+
+Closes the session's connection. Safe to call when not connected.
 
 ### Types
 
@@ -128,7 +155,7 @@ const client = new TrueNASClient(
 3. If authentication succeeds, your request is sent over the same connection.
 4. The connection is closed after the response is received.
 
-Each call to `sendRequest` opens and closes its own WebSocket connection.
+Each call to `sendRequest` opens and closes its own WebSocket connection. A session (`connect` / `call` / `close`) logs in once and sends every `call` over the same connection.
 
 ## Building
 

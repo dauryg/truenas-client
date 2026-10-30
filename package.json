@@ -1,6 +1,6 @@
 {
   "name": "truenas-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A lightweight TypeScript client for the TrueNAS WebSocket API (JSON-RPC 2.0)",
   "main": "dist/index.cjs",
   "type": "module",

@@ -2,6 +2,8 @@ export default class TrueNASClient {
 
   private wsURL: string;
   private apiKey: string;
+  private socket: WebSocket | undefined;
+  private nextId = 0;
 
   constructor(wsURL: string, apiKey: string) {
     const url = new URL(wsURL);
@@ -17,16 +19,52 @@ export default class TrueNASClient {
     try {
       const authRequest: JSONRPCRequest = this.request(id++, "auth.login_with_api_key", [this.apiKey]);
       const apiRequest: JSONRPCRequest = this.request(id++, method, params);
-      const authResponse: JSONRPCResponse = await this.call(socket, authRequest, timeoutMs);
+      const authResponse: JSONRPCResponse = await this.exchange(socket, authRequest, timeoutMs);
 
       if(authResponse.result !== true) {
         throw new Error("Authentication failed");
       }
 
-      return await this.call(socket, apiRequest, timeoutMs);
+      return await this.exchange(socket, apiRequest, timeoutMs);
     } finally {
       socket.close();
     }
+  }
+
+  // Opens one connection and logs in; call() then reuses it until close().
+  async connect(timeoutMs = 30000): Promise<void> {
+    if(this.socket) {
+      throw new Error("Already connected. Call close() first");
+    }
+    const socket = new WebSocket(this.wsURL);
+    this.socket = socket;
+    try {
+      const authRequest: JSONRPCRequest = this.request(this.nextId++, "auth.login_with_api_key", [this.apiKey]);
+      const authResponse: JSONRPCResponse = await this.exchange(socket, authRequest, timeoutMs);
+
+      if(authResponse.result !== true) {
+        throw new Error("Authentication failed");
+      }
+    } catch (error: unknown) {
+      this.close();
+      throw error;
+    }
+  }
+
+  async call(method: string, params?: any, timeoutMs = 30000): Promise<JSONRPCResponse> {
+    if(!this.socket) {
+      throw new Error("Not connected. Call connect() first");
+    }
+    // A socket the server dropped would otherwise wait for an open event until the timeout.
+    if(this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error(`Connection lost (WebSocket readyState ${this.socket.readyState})`);
+    }
+    return await this.exchange(this.socket, this.request(this.nextId++, method, params), timeoutMs);
+  }
+
+  close(): void {
+    this.socket?.close();
+    this.socket = undefined;
   }
 
   private request(id: number, method: string, params?: any): JSONRPCRequest {
@@ -45,7 +83,7 @@ export default class TrueNASClient {
     return String(data);
   }
 
-  private call(socket: WebSocket, req: JSONRPCRequest, timeoutMs: number): Promise<JSONRPCResponse> {
+  private exchange(socket: WebSocket, req: JSONRPCRequest, timeoutMs: number): Promise<JSONRPCResponse> {
     return new Promise((resolve, reject) => {
 
       const cleanup = () => {
